@@ -42,7 +42,6 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *PrimBlogSe
 	// Counts where we at in the stringTable
 	counter := 0
 
-	tx, _ := conn.Begin(context.Background())
 	var sb strings.Builder
 	sb.WriteString("Insert INTO points (id, geom, tags) VALUES ")
 
@@ -95,11 +94,19 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *PrimBlogSe
 
 	}
 
-	str := sb.String()[:len(sb.String())-1]
-	_, err := conn.Exec(context.Background(), str)
-	if err != nil {
-		log.Fatal("Exec:", err, str)
+	// Catch no Nodes to write.
+	if sb.Len() > 30 {
+		return MyNodes
 	}
-	tx.Commit(context.Background())
+	str := sb.String()[:len(sb.String())-1]
+
+	if ToDB {
+		tx, _ := conn.Begin(context.Background())
+		_, err := conn.Exec(context.Background(), str)
+		if err != nil {
+			log.Fatal("Exec:", err, str)
+		}
+		tx.Commit(context.Background())
+	}
 	return MyNodes
 }

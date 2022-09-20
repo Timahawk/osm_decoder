@@ -15,6 +15,11 @@ import (
 // var db *badger.DB
 // var Conn *pgx.Conn
 
+var ToDB = true
+var ToDB_LineString = true
+
+var failCnt = 0
+
 var connstring = "postgresql://postgres:postgres@localhost:5432/osmconverter"
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
@@ -38,7 +43,7 @@ func main() {
 
 	start := time.Now()
 
-	file, err := os.Open("D:/Master/Masterarbeit/data/karlsruhe-regbez-latest.osm.pbf")
+	file, err := os.Open("D:/Downloads/mittelfranken-latest.osm.pbf")
 	if err != nil {
 		log.Fatalln("Error reading file:", err)
 	}

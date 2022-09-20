@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
-	"encoding/csv"
 	"fmt"
 	"io"
 	"log"
@@ -86,12 +85,14 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 	// defer testfile.Close()
 	// w := csv.NewWriter(testfile)
 
-	wayfile, _ := os.Create("wayfile.csv")
-	defer wayfile.Close()
-	waywriter := csv.NewWriter(wayfile)
+	// wayfile, _ := os.Create("wayfile.csv")
+	// defer wayfile.Close()
+	// waywriter := csv.NewWriter(wayfile)
 
 	counter_simple := 0
 	counter_tagged := 0
+
+	largeMap := make(map[int64]Coord)
 
 	c_dense, c_node, c_way, c_relation := 0, 0, 0, 0
 	start := time.Now()
@@ -130,19 +131,25 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 				c_dense += 1
 			}
 
+			for _, node := range allnodes {
+				largeMap[node.id] = Coord{node.lat, node.lon}
+			}
+
+			// for key, value := range largeMap {
+			// 	fmt.Println("LARGE MAP", key, value)
+			// }
+
 			if len(group.GetNodes()) != 0 {
 				c_node += 1
 			}
 			if len(group.GetWays()) != 0 {
-				allWays = append(allWays, DecodeWays(group, strTable)...)
+				allWays = append(allWays, DecodeWays(group, strTable, largeMap, conn)...)
 				c_way += 1
 			}
 			if len(group.GetRelations()) != 0 {
 				c_relation += 1
 			}
 		}
-
-		// for _, node := range allnodes {
 
 		// 	if len(node.tags) != 0 {
 		// 		w.Write([]string{
@@ -172,14 +179,18 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 		// }
 		// w.Flush()
 
-		for _, node := range allWays {
+		// for _, way := range allWays {
 
-			waywriter.Write([]string{
-				fmt.Sprintf("%v", node.Id),
-				fmt.Sprintf("%v", node.Tags)})
+		// fmt.Println(way.String())
 
-		}
-		waywriter.Flush()
+		// 	waywriter.Write([]string{
+		// 		fmt.Sprintf("%v", way.Id),
+		// 		fmt.Sprintf("%v", way.Tags),
+		// 		fmt.Sprintf("%v", way.Refs),
+		// 		fmt.Sprintf("%v", way.Coords)})
+
+		// }
+		// waywriter.Flush()
 
 		i += 1
 	}
@@ -188,6 +199,7 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 	fmt.Println("Anzahl PrimitiveGroups:", i)
 	fmt.Println("Anzahl einfacher Features:", counter_simple)
 	fmt.Println("Anzahl taggeder Features:", counter_tagged)
+	fmt.Println("Anzahl nicht korrekt gelesener LineStrings:", failCnt)
 	return nil
 }
 
