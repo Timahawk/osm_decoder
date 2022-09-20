@@ -1,0 +1,11 @@
+*.csv
+
+*.exe
+
+osmeporter.prof
+
+*.prof
+
+/.vscode
+
+/data
