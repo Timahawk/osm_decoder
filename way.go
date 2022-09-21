@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -23,8 +22,8 @@ type MyWay struct {
 }
 
 func (mw *MyWay) String() string {
-	var sb strings.Builder
 
+	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("(%v, '", mw.Id))
 
 	j := 0
@@ -67,8 +66,7 @@ func (mw *MyWay) String() string {
 		sb.WriteString("], ST_GeomFromText('POLYGON((")
 	}
 
-	// Coords not zugeordnet
-	counter := 0
+	counter := 0 // Number of Coords in Result String.
 	num := len(mw.Coords)
 	for i, coord := range mw.Coords {
 
@@ -89,10 +87,10 @@ func (mw *MyWay) String() string {
 	// TODO aber möglichst bald...
 
 	if counter == 0 {
-		// fmt.Println("Not zugeordnet at all", mw.Id, mw.Refs, mw.Coords)
+		fmt.Println("Not zugeordnet at all", mw.Id, mw.Refs, mw.Coords)
 		return ""
 	} else if counter == 1 {
-		// fmt.Println("Nur eine Coord zugeordnet", mw.Id, mw.Refs, mw.Coords)
+		fmt.Println("Nur eine Coord zugeordnet", mw.Id, mw.Refs, mw.Coords)
 		return ""
 
 		// Falls geom am Anfang aber dann nur noch nullen:
@@ -122,8 +120,10 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 	ways := pg.GetWays()
 
 	var sb strings.Builder
+	var sbp strings.Builder
 
 	sb.WriteString("INSERT INTO Lines VALUES ")
+	sbp.WriteString("INSERT INTO Polygons VALUES ")
 	// fmt.Println(sb.Len())
 
 	for _, way := range ways {
@@ -159,36 +159,39 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 
 		myways = append(myways, mw)
 
+		str := mw.String()
+		if str == "" {
+			failCnt += 1
+			fmt.Println("Failcnt", failCnt)
+		}
 		if mw.Type == "LineString" {
-
-			str := mw.String()
-			if str == "" {
-				failCnt += 1
-			}
 			sb.WriteString(str)
 		}
-	}
-	var str string
-	if sb.Len() > 30 {
-		str = sb.String()[:len(sb.String())-2]
-	} else {
-		// fmt.Println(sb.String())
-		return myways
+		if mw.Type == "Polygon" {
+			sbp.WriteString(str)
+		}
 	}
 
 	if ToDB_LineString {
+		// Catch no Nodes to write.
+		if sb.Len() > 30 {
+			str := sb.String()[:len(sb.String())-2]
+			err := Insert(conn, str)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
 
-		tx, err := conn.Begin(context.Background())
-		if err != nil {
-			log.Fatal("Begin:", err, str)
-		}
-		_, err = conn.Exec(context.Background(), str)
-		if err != nil {
-			log.Fatal("Exec:", err, str[:50000])
-		}
-		err = tx.Commit(context.Background())
-		if err != nil {
-			log.Fatal("Commit:", err, str)
+	}
+
+	if ToDB_Polygons {
+		// Catch no Nodes to write.
+		if sbp.Len() > 30 {
+			str := sbp.String()[:len(sbp.String())-2]
+			err := Insert(conn, str)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 

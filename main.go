@@ -15,8 +15,9 @@ import (
 // var db *badger.DB
 // var Conn *pgx.Conn
 
-var ToDB = true
-var ToDB_LineString = true
+var ToDB_Points = false
+var ToDB_LineString = false
+var ToDB_Polygons = false
 
 var failCnt = 0
 
@@ -43,7 +44,7 @@ func main() {
 
 	start := time.Now()
 
-	file, err := os.Open("D:/Downloads/mittelfranken-latest.osm.pbf")
+	file, err := os.Open("D:/Downloads/muenster-regbez-latest.osm.pbf")
 	if err != nil {
 		log.Fatalln("Error reading file:", err)
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -11,47 +10,50 @@ import (
 )
 
 type MyNode struct {
-	id   int64
-	lat  float64
-	lon  float64
+	Id   int64
+	Lat  float64
+	Lon  float64
 	tags map[string]string
 }
 
-func calc(num int64, pbs *PrimBlogSettings) float64 {
+// calc converts the value stored in Lat/Lon into valid WGS84 coordiantes
+// If for some reason lonOffset & latOffset are different, this will make
+// all latitude results incorrect
+func calc(num int64, pbs *primBlockSettings) float64 {
 	return pbs.coordScale * float64(pbs.lonOffset+(pbs.granularity*num))
 }
 
-func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *PrimBlogSettings, conn *pgx.Conn) []*MyNode {
-
-	// fmt.Println(pbs)
+// decodeDenseNodes loops over all Nodes within a Primitive Group and decodes them.
+// If flag is set, it also writes them to the DB.
+// TODO make writing to DB own function.
+func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockSettings, conn *pgx.Conn) []*MyNode {
 
 	MyNodes := []*MyNode{}
 
 	strtable := st.GetS()
+	// Counts where we at in the stringTable
+	counter := 0
 
 	densenodes := pg.GetDense()
-	id := densenodes.GetId()
-	lat := densenodes.GetLat()
-	lon := densenodes.GetLon()
+	Id := densenodes.GetId()
+	Lat := densenodes.GetLat()
+	Lon := densenodes.GetLon()
 	tags := densenodes.GetKeysVals()
 
 	delta_id := int64(0)
-	delta_lat := int64(0)
-	delta_lon := int64(0)
-
-	// Counts where we at in the stringTable
-	counter := 0
+	delta_Lat := int64(0)
+	delta_Lon := int64(0)
 
 	var sb strings.Builder
 	sb.WriteString("Insert INTO points (id, geom, tags) VALUES ")
 
-	for i := 0; i < len(id); i++ {
+	for i := 0; i < len(Id); i++ {
 
-		delta_id = id[i] + delta_id
-		delta_lat = lat[i] + delta_lat
-		delta_lon = lon[i] + delta_lon
+		delta_id = Id[i] + delta_id
+		delta_Lat = Lat[i] + delta_Lat
+		delta_Lon = Lon[i] + delta_Lon
 
-		mn := MyNode{delta_id, calc(delta_lat, pbs), calc(delta_lon, pbs), map[string]string{}}
+		mn := MyNode{delta_id, calc(delta_Lat, pbs), calc(delta_Lon, pbs), map[string]string{}}
 
 		for {
 			if tags[counter] == 0 {
@@ -68,7 +70,7 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *PrimBlogSe
 		// Schreibe zum String wenn es einen Tag hat.
 		if len(mn.tags) != 0 {
 
-			sb.WriteString(fmt.Sprintf("(%v, ST_GeomFromText('POINT(%v %v)'),'", mn.id, mn.lon, mn.lat))
+			sb.WriteString(fmt.Sprintf("(%v, ST_GeomFromText('POINT(%v %v)'),'", mn.Id, mn.Lon, mn.Lat))
 
 			j := 0
 			l := len(mn.tags)
@@ -95,18 +97,16 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *PrimBlogSe
 	}
 
 	// Catch no Nodes to write.
-	if sb.Len() > 30 {
+	if sb.Len() < 50 {
 		return MyNodes
 	}
-	str := sb.String()[:len(sb.String())-1]
 
-	if ToDB {
-		tx, _ := conn.Begin(context.Background())
-		_, err := conn.Exec(context.Background(), str)
+	if ToDB_Points {
+		str := sb.String()[:len(sb.String())-1]
+		err := Insert(conn, str)
 		if err != nil {
-			log.Fatal("Exec:", err, str)
+			log.Fatal(err)
 		}
-		tx.Commit(context.Background())
 	}
 	return MyNodes
 }

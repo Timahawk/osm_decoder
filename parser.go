@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -17,69 +17,49 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type PrimBlogSettings struct {
+type primBlockSettings struct {
 	granularity int64
 	latOffset   int64
 	lonOffset   int64
 	coordScale  float64
 }
 
+// LoopOverFile loops over the complete .pbf file.
+// The file is build up of BlobHeaders and Blobs
+// Blobs can be HeaderBlock or an Primitive Block.
+// BlobHeader und Blob kommen aus dem "fileformat.proto"
+// HeaderBlock und PrimitiveBlock kommen aus "osmformat.proto"
 func LoopOverFile(file *os.File, conn *pgx.Conn) error {
-	// BlobHeader und Blob kommen aus dem "fileformat.proto"
-	// HeaderBlog und PrimitiveBlog kommen aus "osmformat.proto"
 
 	// Das ist ein BlobHeader
-	blobHeader, err := extractHeader(file)
+	blobHeader, err := extractBlobHeader(file)
 	if err != nil {
 		log.Fatalln("Error reading the first BlobHeader")
 	}
 
-	// Das  ist der Blob der den HeaderBlog enthält
+	fmt.Println("First Header Blob:")
+	fmt.Printf("\ttype: %v\n\tindexdata: %v\n\tdatasize: %v\n",
+		blobHeader.GetType(),
+		blobHeader.GetIndexdata(),
+		blobHeader.GetDatasize())
+
+	// Das  ist der Blob der den HeaderBlock enthält
 	blob, err := extractBlob(blobHeader, file)
 	if err != nil {
-		log.Fatalln("Error reading the HeaderBlog")
+		log.Fatalln("Error reading the HeaderBlock")
 	}
-	headerBlog := pb.HeaderBlock{}
-	err = proto.Unmarshal(blob, &headerBlog)
+	// Ist einmalig im Datensatz. Deshalb außerhalb des loops.
+	headerBlock := pb.HeaderBlock{}
+	err = proto.Unmarshal(blob, &headerBlock)
 	if err != nil {
 		log.Fatalf("UnmarshalBlob error, %v", err)
 	}
-	fmt.Println(
-		"Bbox", headerBlog.GetBbox(),
-		"RequiredFeatures", headerBlog.GetRequiredFeatures(),
-		"OptinalFeatures", headerBlog.GetOptionalFeatures(),
-		"WritingProgramm", headerBlog.GetWritingprogram())
-
-	// Das ist ein BlobHeader
-	blobHeader, err = extractHeader(file)
-	if err != nil {
-		log.Fatalln("Error reading BlobHeader2")
-	}
-
-	// Hier gehts quasi richtig los mit den Daten
-	// Im ersten Blog sind aber nur DenseNodes
-	// DenseNodes sind nicht ein Struct mit jeweils Lat Long ID undsowas,
-	// Sondern eine Liste die dann zusammengebastelt werden muss.
-	// Die Eigenschaften kommen dann aus dem String Tabel
-	// Ist alles ein wenig umständlich gemacht...
-	blog, err := extractBlob(blobHeader, file)
-	if err != nil {
-		log.Fatalln("Error reading Blob2")
-	}
-
-	primitiveBlog := pb.PrimitiveBlock{}
-	err = proto.Unmarshal(blog, &primitiveBlog)
-	if err != nil {
-		log.Fatalf("UnmarshalBlob error, %v", err)
-	}
-
-	pbs := &PrimBlogSettings{
-		int64(primitiveBlog.GetGranularity()),
-		primitiveBlog.GetLatOffset(),
-		primitiveBlog.GetLonOffset(),
-		0.000000001}
-
-	i := 0
+	fmt.Println("The Header Block:")
+	fmt.Printf("\tBbox: %v\n\tRequiredFeatures: %v\n\tOptinalFeatures: %v\n\tWritingProgramm: %v\n",
+		headerBlock.GetBbox(),
+		headerBlock.GetRequiredFeatures(),
+		headerBlock.GetOptionalFeatures(),
+		headerBlock.GetWritingprogram())
 
 	// testfile, _ := os.Create("testfile2.csv")
 	// defer testfile.Close()
@@ -89,37 +69,57 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 	// defer wayfile.Close()
 	// waywriter := csv.NewWriter(wayfile)
 
-	counter_simple := 0
-	counter_tagged := 0
+	i := 0              // Numbers of Primitive Groups.
+	counter_simple := 0 // DenseNodes without tag
+	counter_tagged := 0 // DenseNodes with tag
+	counter_LineString := 0
+	counter_Polygon := 0
 
 	largeMap := make(map[int64]Coord)
 
 	c_dense, c_node, c_way, c_relation := 0, 0, 0, 0
-	start := time.Now()
+
+	// Hier gehts quasi richtig los mit den Daten
+	// Im ersten Block sind aber nur DenseNodes
+	// DenseNodes sind nicht ein Struct mit jeweils Lat Long ID undsowas,
+	// Sondern eine Liste die dann zusammengebastelt werden muss.
+	// Die Eigenschaften kommen dann aus dem String Tabel
+	// Ist alles ein wenig umständlich gemacht...
 	// Ab hier wird dann solange über abwechselnd BlobHeader Blob geloopt bis error.
-	// In den Blobs sind nur noch blogs!
+	// In den Blobs sind nur noch Blocks!
 	for {
-		blobHeader, err := extractHeader(file)
+		blobHeader, err := extractBlobHeader(file)
+		if err == errors.New("EOF") {
+			log.Println("Reached end of file after reading", i, "Blocks.")
+			break
+
+		}
 		if err != nil {
 			fmt.Printf("Error reading BlobHeader2 %v\n", err)
 			break
 		}
 
-		blog, err := extractBlob(blobHeader, file)
+		Block, err := extractBlob(blobHeader, file)
 		if err != nil {
 			fmt.Printf("Error reading Blob2\n")
 			break
 		}
 
-		primitiveBlog := pb.PrimitiveBlock{}
-		err = proto.Unmarshal(blog, &primitiveBlog)
+		primitiveBlock := pb.PrimitiveBlock{}
+		err = proto.Unmarshal(Block, &primitiveBlock)
 		if err != nil {
 			fmt.Printf("UnmarshalBlob error, %v\n", err)
 			break
 		}
 
-		strTable := primitiveBlog.GetStringtable()
-		primgroup := primitiveBlog.GetPrimitivegroup()
+		pbs := &primBlockSettings{
+			int64(primitiveBlock.GetGranularity()),
+			primitiveBlock.GetLatOffset(),
+			primitiveBlock.GetLonOffset(),
+			0.000000001} // Stolen from imposm3
+
+		strTable := primitiveBlock.GetStringtable()
+		primgroup := primitiveBlock.GetPrimitivegroup()
 
 		allnodes := []*MyNode{}
 		allWays := []*MyWay{}
@@ -127,12 +127,18 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 		for _, group := range primgroup {
 
 			if len(group.GetDense().GetId()) != 0 {
-				allnodes = append(allnodes, decodeDenseNodes(group, strTable, pbs, conn)...)
+				decoded := decodeDenseNodes(group, strTable, pbs, conn)
+				allnodes = append(allnodes, decoded...)
 				c_dense += 1
 			}
 
 			for _, node := range allnodes {
-				largeMap[node.id] = Coord{node.lat, node.lon}
+				largeMap[node.Id] = Coord{node.Lat, node.Lon}
+				if len(node.tags) != 0 {
+					counter_tagged += 1
+				} else {
+					counter_simple += 1
+				}
 			}
 
 			// for key, value := range largeMap {
@@ -143,24 +149,23 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 				c_node += 1
 			}
 			if len(group.GetWays()) != 0 {
-				allWays = append(allWays, DecodeWays(group, strTable, largeMap, conn)...)
+				decoded := DecodeWays(group, strTable, largeMap, conn)
+				allWays = append(allWays, decoded...)
 				c_way += 1
 			}
+
+			for _, way := range allWays {
+				if way.Type == "LineString" {
+					counter_LineString += 1
+				} else {
+					counter_Polygon += 1
+				}
+			}
+
 			if len(group.GetRelations()) != 0 {
 				c_relation += 1
 			}
 		}
-
-		// 	if len(node.tags) != 0 {
-		// 		w.Write([]string{
-		// 			fmt.Sprintf("%v", node.id),
-		// 			fmt.Sprintf("%f", node.lat),
-		// 			fmt.Sprintf("%f", node.lon),
-		// 			fmt.Sprintf("%v", node.tags)})
-		// 		counter_tagged += 1
-		// 	} else {
-		// 		counter_simple += 1
-		// 	}
 
 		// 	// err = db.Update(func(tx *badger.Txn) error {
 		// 	// 	key := make([]byte, 8)
@@ -194,12 +199,23 @@ func LoopOverFile(file *os.File, conn *pgx.Conn) error {
 
 		i += 1
 	}
-	log.Println("Processing Nodes, Ways & Relations took ", time.Since(start))
-	fmt.Println("dense", c_dense, "nodes", c_node, "way", c_way, "relation", c_relation)
-	fmt.Println("Anzahl PrimitiveGroups:", i)
-	fmt.Println("Anzahl einfacher Features:", counter_simple)
-	fmt.Println("Anzahl taggeder Features:", counter_tagged)
+
+	fmt.Println("Anzahl Primitive Blocks:")
+	fmt.Printf("\t"+
+		"DenseNodes: %v (Features -> total: %v, tagged: %v, simple: %v)\n\t"+
+		"Nodes: %v\n\t"+
+		"Ways: %v (Features -> total: %v, LineStrings: %v, Polygons: %v)\n\t"+
+		"Relations: %v\n\t"+
+		"Summe: %v\n",
+		c_dense, (counter_tagged + counter_simple), counter_tagged, counter_simple,
+		c_node,
+		c_way, (counter_LineString + counter_Polygon), counter_LineString, counter_Polygon,
+		c_relation,
+		i)
+	// TODO this is buggy somehow.
 	fmt.Println("Anzahl nicht korrekt gelesener LineStrings:", failCnt)
+
+	// log.Println("Processing Nodes, Ways & Relations took ", time.Since(start))
 	return nil
 }
 
@@ -228,12 +244,13 @@ func extractBlob(blobHeader *pb.BlobHeader, file *os.File) ([]byte, error) {
 	return []byte(builder.String()), nil
 }
 
-func extractHeader(file *os.File) (*pb.BlobHeader, error) {
+func extractBlobHeader(file *os.File) (*pb.BlobHeader, error) {
 	var size int32
 	err := binary.Read(file, binary.BigEndian, &size)
-	// if err == "EOF" {
-	// 	return &pb.BlobHeader{}, nil
-	// }
+	if err == errors.New("EOF") {
+		log.Println("Reached end of file.")
+		return &pb.BlobHeader{}, err
+	}
 	if err != nil {
 		return &pb.BlobHeader{}, fmt.Errorf("%v reading header size", err)
 	}
