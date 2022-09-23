@@ -3,27 +3,69 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Insert(str string) error {
+func toDB(pool *pgxpool.Pool) {
 
-	// fmt.Println(largeMapNode.Get("102343214"))
-	// fmt.Printf("%#v", Pool.Config().MinConns)
+	var sb strings.Builder
+	sb.WriteString("Insert into Points (id,tags,geom) VALUES ")
 
-	// tx, err := Pool.Begin(context.Background())
-	// if err != nil {
-	// 	return fmt.Errorf("begin: %d,\n %s ", err, str)
-	// 	// return fmt.Errorf("begin: %d,\n %s,\n\n %s", err, str[:1000], str[len(str)-500:])
-	// }
-	_, err := Pool.Exec(context.Background(), str)
+	valuesNodes := largeMapNode.IterBuffered()
+	for tuple := range valuesNodes {
+		if len(tuple.Val.Tags) != 0 {
+
+			sb.WriteString(tuple.Val.SQLString() + ",")
+		}
+	}
+	// TODO commit more often.
+	str := sb.String()
+	err := Insert(pool, str[:len(str)-1])
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	sb.Reset()
+	sb.WriteString("Insert into Lines (id,tags,geom) VALUES")
+	valuesLineString := largeMapLineString.IterBuffered()
+	for tuple := range valuesLineString {
+		if len(tuple.Val.Tags) != 0 {
+			sb.WriteString(tuple.Val.SQLString() + ",")
+		}
+	}
+	// TODO commit more often.
+	str = sb.String()
+	err = Insert(pool, str[:len(str)-1])
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	sb.Reset()
+	sb.WriteString("Insert into Polygons (id,tags,geom) VALUES")
+	valuesLinePolygons := largeMapPolygon.IterBuffered()
+	for tuple := range valuesLinePolygons {
+		if len(tuple.Val.Tags) != 0 {
+			sb.WriteString(tuple.Val.SQLString() + ",")
+		}
+	}
+	// TODO commit more often.
+	str = sb.String()
+	err = Insert(pool, str[:len(str)-1])
+	if err != nil {
+		log.Fatalln(err)
+	}
+}
+
+func Insert(pool *pgxpool.Pool, str string) error {
+
+	_, err := pool.Exec(context.Background(), str)
 	if err != nil {
 		// return fmt.Errorf("exec: %d,\n %s ", err, str)
 		return fmt.Errorf("exec:, %d,\n %s,\n\n %s", err, str[:1000], str[len(str)-500:])
 	}
-	// err = tx.Commit(context.Background())
-	// if err != nil {
-	// 	return fmt.Errorf("commit: %d,\n %s ", err, str)
-	// 	// return fmt.Errorf("commit:, %d,\n %s,\n\n %s", err, str[:1000], str[len(str)-500:])
-	// }
+
 	return nil
 }

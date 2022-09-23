@@ -7,14 +7,14 @@ import (
 	"sync"
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
+	"github.com/twpayne/go-geom"
+	"github.com/twpayne/go-geom/encoding/wkt"
 )
 
 type MyNode struct {
-	Id int64
-	// Lat    float64
-	// Lon    float64
+	Id     int64
 	Tags   map[string]string
-	Coords Coord
+	Coords geom.Point
 }
 
 // calc converts the value stored in Lat/Lon into valid WGS84 coordiantes
@@ -26,13 +26,10 @@ func calc(num int64, pbs *primBlockSettings) float64 {
 
 // decodeDenseNodes loops over all Nodes within a Primitive Group and decodes them.
 // If flag is set, it also writes them to the DB.
-func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockSettings, wg *sync.WaitGroup) {
+func decodeDenseNodes(pg *pb.PrimitiveGroup, strtable [][]byte, pbs *primBlockSettings, wg *sync.WaitGroup) {
 	defer wg.Done()
-	// MyNodes := []*MyNode{}
 
-	strtable := st.GetS()
-	// Counts where we at in the stringTable
-	counter := 0
+	counter := 0 // Counts where we at in the stringTable
 
 	densenodes := pg.GetDense()
 	Id := densenodes.GetId()
@@ -44,16 +41,13 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockS
 	delta_Lat := int64(0)
 	delta_Lon := int64(0)
 
-	var sb strings.Builder
-	sb.WriteString("Insert INTO points (id, geom, tags) VALUES ")
-
 	for i := 0; i < len(Id); i++ {
 
 		delta_id = Id[i] + delta_id
 		delta_Lat = Lat[i] + delta_Lat
 		delta_Lon = Lon[i] + delta_Lon
 
-		mn := MyNode{delta_id, map[string]string{}, Coord{calc(delta_Lat, pbs), calc(delta_Lon, pbs)}}
+		mn := MyNode{delta_id, map[string]string{}, *geom.NewPoint(geom.XY).MustSetCoords([]float64{calc(delta_Lon, pbs), calc(delta_Lat, pbs)}).SetSRID(4326)}
 
 		for {
 			if tags[counter] == 0 {
@@ -65,47 +59,47 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockS
 			}
 		}
 
-		// MyNodes = append(MyNodes, &mn)
 		largeMapNode.Set(fmt.Sprint(delta_id), mn)
+	}
+}
 
-		// Schreibe zum String wenn es einen Tag hat.
-		if len(mn.Tags) != 0 {
-
-			sb.WriteString(fmt.Sprintf("(%v, ST_GeomFromText('POINT(%v %v)'),'", mn.Id, mn.Coords.Lon, mn.Coords.Lat))
-
-			j := 0
-			l := len(mn.Tags)
-			for key, value := range mn.Tags {
-
-				// Das weil das sonst Escaped.
-				// TODO nicht weglasssen sondern Umformen
-				if strings.ContainsRune(value, '\'') {
-					j += 1
-					continue
-				}
-
-				// Muss wegen dem Komma am Ende.
-				if j+1 == l {
-					sb.WriteString(fmt.Sprintf("%q=>%q", key, value))
-				} else {
-					sb.WriteString(fmt.Sprintf("%q=>%q, ", key, value))
-				}
-				j += 1
-			}
-			sb.WriteString("'),")
-		}
-
+func (n *MyNode) SQLString() string {
+	// Schreibe zum String wenn es einen Tag hat.
+	if len(n.Tags) == 0 {
+		return ""
 	}
 
-	if ToDB_Points {
-		// Catch no Nodes to write.
-		if sb.Len() > 50 {
+	var sb strings.Builder
 
-			str := sb.String()[:len(sb.String())-1]
-			err := Insert(str)
-			if err != nil {
-				log.Fatal(err)
-			}
+	sb.WriteString("(" + fmt.Sprint(n.Id) + ", ('")
+
+	j := 0
+	len := len(n.Tags)
+	for key, value := range n.Tags {
+
+		// Das weil das sonst Escaped.
+		// TODO nicht weglasssen sondern Umformen
+		if strings.ContainsRune(value, '\'') {
+			j += 1
+			continue
 		}
+
+		// Muss wegen dem Komma am Ende.
+		if j+1 == len {
+			sb.WriteString(fmt.Sprintf("%q=>%q", key, value))
+		} else {
+			sb.WriteString(fmt.Sprintf("%q=>%q, ", key, value))
+		}
+		j += 1
 	}
+	sb.WriteString("'), ST_GeomFromText('")
+
+	encoder := wkt.NewEncoder()
+	str, err := encoder.Encode(&n.Coords)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sb.WriteString(str + "'))")
+	return sb.String()
 }
