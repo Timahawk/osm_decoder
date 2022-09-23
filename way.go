@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
-	"github.com/jackc/pgx/v5"
 )
 
 type Coord struct {
-	lat float64
-	lon float64
+	Lat float64
+	Lon float64
 }
 type MyWay struct {
 	Id     int64
@@ -70,15 +70,15 @@ func (mw *MyWay) String() string {
 	num := len(mw.Coords)
 	for i, coord := range mw.Coords {
 
-		if coord.lat == 0 {
+		if coord.Lat == 0 {
 			continue
 		}
 		// Muss wegen dem Komma am Ende.
 		if i+1 == num {
-			sb.WriteString(fmt.Sprintf("%v %v", coord.lon, coord.lat))
+			sb.WriteString(fmt.Sprintf("%v %v", coord.Lon, coord.Lat))
 			counter += 1
 		} else {
-			sb.WriteString(fmt.Sprintf("%v %v,", coord.lon, coord.lat))
+			sb.WriteString(fmt.Sprintf("%v %v,", coord.Lon, coord.Lat))
 			counter += 1
 		}
 	}
@@ -92,7 +92,9 @@ func (mw *MyWay) String() string {
 	} else if counter == 1 {
 		fmt.Println("Nur eine Coord zugeordnet", mw.Id, mw.Refs, mw.Coords)
 		return ""
-
+	} else if mw.Type == "Polygon" && counter <= 3 {
+		fmt.Println("Zu wenig Coords zugeordnet", mw.Id, mw.Refs, mw.Coords)
+		return ""
 		// Falls geom am Anfang aber dann nur noch nullen:
 	} else if sb.String()[sb.Len()-1] == ',' && counter > 1 {
 		// fmt.Println("Komma am Ende", mw.Id, mw.Refs, mw.Coords)
@@ -111,12 +113,11 @@ func (mw *MyWay) String() string {
 	return sb.String()
 }
 
-func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Coord, conn *pgx.Conn) []*MyWay {
-
-	myways := []*MyWay{}
+func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, wg *sync.WaitGroup) {
+	defer wg.Done()
+	// myways := []*MyWay{}
 
 	strtable := st.GetS()
-	delta_id := int64(0)
 	ways := pg.GetWays()
 
 	var sb strings.Builder
@@ -128,8 +129,7 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 
 	for _, way := range ways {
 
-		delta_id += way.GetId()
-		mw := &MyWay{delta_id, map[string]string{}, []int64{}, []Coord{}, ""}
+		mw := &MyWay{way.GetId(), map[string]string{}, []int64{}, []Coord{}, ""}
 
 		keys := way.GetKeys()
 		values := way.GetVals()
@@ -139,16 +139,13 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 			mw.Tags[string(strtable[k])] = string(strtable[values[i]])
 		}
 
-		// for key, value := range largeMap {
-		// 	fmt.Println("LARGE MAP", key, value)
-		// }
-
-		delta_id := int64(0)
+		delta_ref := int64(0)
 		for _, k := range refs {
-			delta_id = k + delta_id
+			delta_ref = k + delta_ref
 
-			mw.Refs = append(mw.Refs, delta_id)
-			mw.Coords = append(mw.Coords, largeMap[delta_id])
+			mw.Refs = append(mw.Refs, delta_ref)
+			coord, _ := largeMapNode.Get(fmt.Sprint(delta_ref))
+			mw.Coords = append(mw.Coords, coord.Coords)
 		}
 
 		if mw.Refs[0] == mw.Refs[len(mw.Refs)-1] {
@@ -157,12 +154,17 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 			mw.Type = "LineString"
 		}
 
-		myways = append(myways, mw)
+		// myways = append(myways, mw)
 
-		str := mw.String()
+		var str string
+		if len(mw.Tags) > 0 {
+			str = mw.String()
+		} else {
+			str = ""
+		}
 		if str == "" {
-			failCnt += 1
-			fmt.Println("Failcnt", failCnt)
+			FailCnt += 1
+			// fmt.Println("Failcnt", failCnt)
 		}
 		if mw.Type == "LineString" {
 			sb.WriteString(str)
@@ -176,7 +178,7 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 		// Catch no Nodes to write.
 		if sb.Len() > 30 {
 			str := sb.String()[:len(sb.String())-2]
-			err := Insert(conn, str)
+			err := Insert(str)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -188,12 +190,12 @@ func DecodeWays(pg *pb.PrimitiveGroup, st *pb.StringTable, largeMap map[int64]Co
 		// Catch no Nodes to write.
 		if sbp.Len() > 30 {
 			str := sbp.String()[:len(sbp.String())-2]
-			err := Insert(conn, str)
+			err := Insert(str)
 			if err != nil {
 				log.Fatal(err)
 			}
 		}
 	}
 
-	return myways
+	// return myways
 }

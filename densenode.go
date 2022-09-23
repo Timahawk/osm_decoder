@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
-	"github.com/jackc/pgx/v5"
 )
 
 type MyNode struct {
-	Id   int64
-	Lat  float64
-	Lon  float64
-	tags map[string]string
+	Id int64
+	// Lat    float64
+	// Lon    float64
+	Tags   map[string]string
+	Coords Coord
 }
 
 // calc converts the value stored in Lat/Lon into valid WGS84 coordiantes
@@ -25,10 +26,9 @@ func calc(num int64, pbs *primBlockSettings) float64 {
 
 // decodeDenseNodes loops over all Nodes within a Primitive Group and decodes them.
 // If flag is set, it also writes them to the DB.
-// TODO make writing to DB own function.
-func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockSettings, conn *pgx.Conn) []*MyNode {
-
-	MyNodes := []*MyNode{}
+func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockSettings, wg *sync.WaitGroup) {
+	defer wg.Done()
+	// MyNodes := []*MyNode{}
 
 	strtable := st.GetS()
 	// Counts where we at in the stringTable
@@ -53,28 +53,29 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockS
 		delta_Lat = Lat[i] + delta_Lat
 		delta_Lon = Lon[i] + delta_Lon
 
-		mn := MyNode{delta_id, calc(delta_Lat, pbs), calc(delta_Lon, pbs), map[string]string{}}
+		mn := MyNode{delta_id, map[string]string{}, Coord{calc(delta_Lat, pbs), calc(delta_Lon, pbs)}}
 
 		for {
 			if tags[counter] == 0 {
 				counter += 1
 				break
 			} else {
-				mn.tags[string(strtable[tags[counter]])] = string(strtable[tags[counter+1]])
+				mn.Tags[string(strtable[tags[counter]])] = string(strtable[tags[counter+1]])
 				counter += 2
 			}
 		}
 
-		MyNodes = append(MyNodes, &mn)
+		// MyNodes = append(MyNodes, &mn)
+		largeMapNode.Set(fmt.Sprint(delta_id), mn)
 
 		// Schreibe zum String wenn es einen Tag hat.
-		if len(mn.tags) != 0 {
+		if len(mn.Tags) != 0 {
 
-			sb.WriteString(fmt.Sprintf("(%v, ST_GeomFromText('POINT(%v %v)'),'", mn.Id, mn.Lon, mn.Lat))
+			sb.WriteString(fmt.Sprintf("(%v, ST_GeomFromText('POINT(%v %v)'),'", mn.Id, mn.Coords.Lon, mn.Coords.Lat))
 
 			j := 0
-			l := len(mn.tags)
-			for key, value := range mn.tags {
+			l := len(mn.Tags)
+			for key, value := range mn.Tags {
 
 				// Das weil das sonst Escaped.
 				// TODO nicht weglasssen sondern Umformen
@@ -96,17 +97,15 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, st *pb.StringTable, pbs *primBlockS
 
 	}
 
-	// Catch no Nodes to write.
-	if sb.Len() < 50 {
-		return MyNodes
-	}
-
 	if ToDB_Points {
-		str := sb.String()[:len(sb.String())-1]
-		err := Insert(conn, str)
-		if err != nil {
-			log.Fatal(err)
+		// Catch no Nodes to write.
+		if sb.Len() > 50 {
+
+			str := sb.String()[:len(sb.String())-1]
+			err := Insert(str)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
-	return MyNodes
 }

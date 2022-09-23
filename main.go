@@ -9,28 +9,32 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // var db *badger.DB
 // var Conn *pgx.Conn
 
-var ToDB_Points = false
-var ToDB_LineString = false
-var ToDB_Polygons = false
+var all = true
 
-var failCnt = 0
+var ToDB_Points = all
+var ToDB_LineString = all
+var ToDB_Polygons = all
+
+var FailCnt = 0
 
 var connstring = "postgresql://postgres:postgres@localhost:5432/osmconverter"
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
+var Pool *pgxpool.Pool
+
 func main() {
 
-	conn, err := pgx.Connect(context.Background(), connstring)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close(context.Background())
+	Pool, _ = pgxpool.New(context.Background(), connstring)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	defer Pool.Close()
 
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -44,7 +48,8 @@ func main() {
 
 	start := time.Now()
 
-	file, err := os.Open("D:/Downloads/muenster-regbez-latest.osm.pbf")
+	// file, err := os.Open("D:/Downloads/rheinland-pfalz-latest.osm.pbf")
+	file, err := os.Open("D:/Downloads/andorra-latest.osm.pbf")
 	if err != nil {
 		log.Fatalln("Error reading file:", err)
 	}
@@ -53,7 +58,7 @@ func main() {
 	// db = SetupDB()
 	// defer db.Close()
 
-	LoopOverFile(file, conn)
+	LoopOverFile(file)
 
 	fmt.Println("Processed Finished in:", time.Since(start))
 }

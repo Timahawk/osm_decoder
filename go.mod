@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.2
 	github.com/jackc/pgx/v5 v5.0.0
+	github.com/orcaman/concurrent-map/v2 v2.0.0
 	google.golang.org/protobuf v1.28.1
 )
 
@@ -21,6 +22,7 @@ require (
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20200714003250-2b9c44734f2b // indirect
+	github.com/jackc/puddle/v2 v2.0.0 // indirect
 	github.com/klauspost/compress v1.12.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	go.opencensus.io v0.22.5 // indirect
