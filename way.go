@@ -1,82 +1,106 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
-	"github.com/twpayne/go-geom"
-	"github.com/twpayne/go-geom/encoding/wkt"
+	"github.com/paulmach/orb"
+	"github.com/paulmach/orb/geojson"
 )
 
-type MyLineString struct {
-	Id     int64
-	Tags   map[string]string
-	Refs   []int64
-	Coords geom.LineString
+type MyWayFeature struct {
+	Feature    geojson.Feature
+	LineString orb.LineString
+	Polygon    orb.Polygon
+	Refs       []int64
 }
 
-type MyPolygon struct {
-	Id     int64
-	Tags   map[string]string
-	Refs   []int64
-	Coords geom.Polygon
-}
+// type MyPolygonFeature struct {
+// 	Feature    geojson.Feature
+// 	LineString orb.LineString
+// }
 
-func decodeLinestring(way *pb.Way, strtable [][]byte) (string, MyLineString) {
-	mls := MyLineString{way.GetId(), map[string]string{}, []int64{}, *geom.NewLineString(geom.XY)}
+func DecodeWay(way *pb.Way, strtable [][]byte) (string, MyWayFeature) {
+
+	feature := MyWayFeature{
+		Feature: geojson.Feature{
+			ID:         way.GetId(),
+			Properties: map[string]interface{}{}}}
 
 	keys := way.GetKeys()
 	values := way.GetVals()
 	for i, k := range keys {
-		mls.Tags[string(strtable[k])] = string(strtable[values[i]])
+		feature.Feature.Properties[string(strtable[k])] = strtable[values[i]]
 	}
 
 	refs := way.GetRefs()
 
 	delta_ref := int64(0)
-	liste_of_coords := []geom.Coord{}
+
+	ls := orb.LineString{}
+	ring := orb.Ring{}
+
 	for _, k := range refs {
 		delta_ref = k + delta_ref
-		mls.Refs = append(mls.Refs, delta_ref)
 
-		coord, ok := largeMapNode.Get(fmt.Sprint(delta_ref))
+		feature.Refs = append(feature.Refs, delta_ref)
+
+		point, ok := largeMapNode.Get(fmt.Sprint(delta_ref))
 		if ok {
-			liste_of_coords = append(liste_of_coords, coord.Coords.Coords())
+			ls = append(ls, point.Point)
+			ring = append(ring, point.Point)
 		}
 	}
-	mls.Coords = *mls.Coords.MustSetCoords(liste_of_coords)
-	return fmt.Sprint(way.GetId()), mls
+
+	if feature.Refs[0] == feature.Refs[len(feature.Refs)-1] {
+
+		polygon := orb.Polygon{ring}
+
+		feature.Feature.BBox = geojson.NewBBox(polygon.Bound())
+		feature.Feature.Type = polygon.GeoJSONType()
+		feature.Feature.Geometry = polygon
+
+		return fmt.Sprint(feature.Feature.ID), feature
+	} else {
+		feature.Feature.BBox = geojson.NewBBox(ls.Bound())
+		feature.Feature.Type = ls.GeoJSONType()
+		feature.Feature.Geometry = ls
+
+		return fmt.Sprint(feature.Feature.ID), feature
+	}
 }
 
-func decodePolygon(way *pb.Way, strtable [][]byte) (string, MyPolygon) {
-	mlp := MyPolygon{way.GetId(), map[string]string{}, []int64{}, *geom.NewPolygon(geom.XY)}
+/*
+	func decodePolygon(way *pb.Way, strtable [][]byte) (string, MyPolygon) {
+		mlp := MyPolygon{way.GetId(), map[string]string{}, []int64{}, *geom.NewPolygon(geom.XY)}
 
-	keys := way.GetKeys()
-	values := way.GetVals()
-	for i, k := range keys {
-		mlp.Tags[string(strtable[k])] = string(strtable[values[i]])
-	}
-
-	refs := way.GetRefs()
-
-	delta_ref := int64(0)
-	liste_of_coords := []geom.Coord{}
-	for _, k := range refs {
-		delta_ref = k + delta_ref
-		mlp.Refs = append(mlp.Refs, delta_ref)
-
-		coord, ok := largeMapNode.Get(fmt.Sprint(delta_ref))
-		if ok {
-			liste_of_coords = append(liste_of_coords, coord.Coords.Coords())
+		keys := way.GetKeys()
+		values := way.GetVals()
+		for i, k := range keys {
+			mlp.Tags[string(strtable[k])] = string(strtable[values[i]])
 		}
-	}
-	mlp.Coords = *mlp.Coords.MustSetCoords([][]geom.Coord{liste_of_coords})
-	return fmt.Sprint(way.GetId()), mlp
-}
 
+		refs := way.GetRefs()
+
+		delta_ref := int64(0)
+		liste_of_coords := []geom.Coord{}
+		for _, k := range refs {
+			delta_ref = k + delta_ref
+			mlp.Refs = append(mlp.Refs, delta_ref)
+
+			coord, ok := largeMapNode.Get(fmt.Sprint(delta_ref))
+			if ok {
+				liste_of_coords = append(liste_of_coords, coord.Coords.Coords())
+			}
+		}
+		mlp.Coords = *mlp.Coords.MustSetCoords([][]geom.Coord{liste_of_coords})
+		return fmt.Sprint(way.GetId()), mlp
+	}
+*/
 func DecodeWays(pg *pb.PrimitiveGroup, strtable [][]byte, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -84,26 +108,50 @@ func DecodeWays(pg *pb.PrimitiveGroup, strtable [][]byte, wg *sync.WaitGroup) {
 
 	for _, way := range ways {
 
-		refs := way.GetRefs()
+		id, feature := DecodeWay(way, strtable)
 
-		// This is duplicated within the decode functions.
-		// TODO clean up
-		decoded_refs := []int64{}
-		delta_ref := int64(0)
-		for _, ref := range refs {
-			delta_ref = delta_ref + ref
-			decoded_refs = append(decoded_refs, delta_ref)
-		}
-
-		if decoded_refs[0] != decoded_refs[len(refs)-1] {
-			largeMapLineString.Set(decodeLinestring(way, strtable))
-		} else {
-			largeMapPolygon.Set(decodePolygon(way, strtable))
-		}
+		largeMapWays.Set(id, feature)
 	}
 }
 
-func (ls *MyLineString) SQLString() string {
+func (f *MyWayFeature) SQLString() string {
+	// Schreibe zum String wenn es einen Tag hat.
+	if len(f.Feature.Properties) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	sb.WriteString("(" + fmt.Sprint(f.Feature.ID) + ", ('")
+
+	j := 0
+	len := len(f.Feature.Properties)
+	for key, value := range f.Feature.Properties {
+
+		value2 := fmt.Sprintf("%s", value)
+		value2 = strings.Replace(value2, "'", "''", -1)
+
+		// Muss wegen dem Komma am Ende.
+		if j+1 == len {
+			sb.WriteString(fmt.Sprintf("%q=>%q", key, value2))
+		} else {
+			sb.WriteString(fmt.Sprintf("%q=>%q, ", key, value2))
+		}
+		j += 1
+	}
+	sb.WriteString("'), ST_GeomFromGeoJSON('{\"type\":\"" + f.Feature.Geometry.GeoJSONType() + "\", \"coordinates\":")
+
+	str, err := json.Marshal(f.Feature.Geometry)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sb.WriteString(string(str) + "}'))")
+	return sb.String()
+}
+
+/*
+func (f *MyLineString) SQLString() string {
 	// Schreibe zum String wenn es einen Tag hat.
 	if len(ls.Tags) == 0 {
 		return ""
@@ -144,6 +192,7 @@ func (ls *MyLineString) SQLString() string {
 	return sb.String()
 }
 
+/*
 func (pg *MyPolygon) SQLString() string {
 	// Schreibe zum String wenn es einen Tag hat.
 	if len(pg.Tags) == 0 {
@@ -184,3 +233,4 @@ func (pg *MyPolygon) SQLString() string {
 	sb.WriteString(str + "'))")
 	return sb.String()
 }
+*/

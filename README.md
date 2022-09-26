@@ -3,6 +3,8 @@
 A new implementation an OSM.pbf File Reader. 
 There is particular reason, as why this is needed or usefull, I simply wanted to try it out...
 
+It uses [orb](https://pkg.go.dev/github.com/paulmach/orb) and [geojson](https://pkg.go.dev/github.com/paulmach/orb/geojson) for the Features.
+
 ## Features Implemented:
  - Reads the PBF File 
  - Writes the Nodes/ Points into Postgres

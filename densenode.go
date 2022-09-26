@@ -1,20 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
-	"github.com/twpayne/go-geom"
-	"github.com/twpayne/go-geom/encoding/wkt"
+	"github.com/paulmach/orb"
+	"github.com/paulmach/orb/geojson"
 )
 
-type MyNode struct {
-	Id     int64
-	Tags   map[string]string
-	Coords geom.Point
+type MyPointFeature struct {
+	Feature geojson.Feature
+	// this is because you cannot acsess the coords of a Feature
+	Point orb.Point
 }
 
 // calc converts the value stored in Lat/Lon into valid WGS84 coordiantes
@@ -47,59 +48,63 @@ func decodeDenseNodes(pg *pb.PrimitiveGroup, strtable [][]byte, pbs *primBlockSe
 		delta_Lat = Lat[i] + delta_Lat
 		delta_Lon = Lon[i] + delta_Lon
 
-		mn := MyNode{delta_id, map[string]string{}, *geom.NewPoint(geom.XY).MustSetCoords([]float64{calc(delta_Lon, pbs), calc(delta_Lat, pbs)}).SetSRID(4326)}
+		p := orb.Point{calc(delta_Lon, pbs), calc(delta_Lat, pbs)}
+
+		feature := MyPointFeature{
+			Feature: geojson.Feature{
+				ID:         delta_id,
+				BBox:       []float64{p.X(), p.Y()},
+				Type:       p.GeoJSONType(),
+				Geometry:   p,
+				Properties: geojson.Properties{}},
+			Point: p}
 
 		for {
 			if tags[counter] == 0 {
 				counter += 1
 				break
 			} else {
-				mn.Tags[string(strtable[tags[counter]])] = string(strtable[tags[counter+1]])
+				feature.Feature.Properties[string(strtable[tags[counter]])] = strtable[tags[counter+1]]
 				counter += 2
 			}
 		}
 
-		largeMapNode.Set(fmt.Sprint(delta_id), mn)
+		largeMapNode.Set(fmt.Sprint(delta_id), feature)
 	}
 }
 
-func (n *MyNode) SQLString() string {
+func (f *MyPointFeature) SQLString() string {
 	// Schreibe zum String wenn es einen Tag hat.
-	if len(n.Tags) == 0 {
+	if len(f.Feature.Properties) == 0 {
 		return ""
 	}
 
 	var sb strings.Builder
 
-	sb.WriteString("(" + fmt.Sprint(n.Id) + ", ('")
+	sb.WriteString("(" + fmt.Sprint(f.Feature.ID) + ", ('")
 
 	j := 0
-	len := len(n.Tags)
-	for key, value := range n.Tags {
+	len := len(f.Feature.Properties)
+	for key, value := range f.Feature.Properties {
 
-		// Das weil das sonst Escaped.
-		// TODO nicht weglasssen sondern Umformen
-		if strings.ContainsRune(value, '\'') {
-			j += 1
-			continue
-		}
+		value2 := fmt.Sprintf("%s", value)
+		value2 = strings.Replace(value2, "'", "''", -1)
 
 		// Muss wegen dem Komma am Ende.
 		if j+1 == len {
-			sb.WriteString(fmt.Sprintf("%q=>%q", key, value))
+			sb.WriteString(fmt.Sprintf("%q=>%q", key, value2))
 		} else {
-			sb.WriteString(fmt.Sprintf("%q=>%q, ", key, value))
+			sb.WriteString(fmt.Sprintf("%q=>%q, ", key, value2))
 		}
 		j += 1
 	}
-	sb.WriteString("'), ST_GeomFromText('")
+	sb.WriteString("'), ST_GeomFromGeoJSON('{\"type\":\"Point\", \"coordinates\":")
 
-	encoder := wkt.NewEncoder()
-	str, err := encoder.Encode(&n.Coords)
+	str, err := json.Marshal(f.Point)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	sb.WriteString(str + "'))")
+	sb.WriteString(string(str) + "}'))")
 	return sb.String()
 }

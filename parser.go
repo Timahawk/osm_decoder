@@ -15,11 +15,14 @@ import (
 
 	pb "github.com/Timahawk/osm_file_decoder/proto"
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/twpayne/go-geom"
 )
 
-var largeMapNode = cmap.New[MyNode]()
-var largeMapLineString = cmap.New[MyLineString]()
-var largeMapPolygon = cmap.New[MyPolygon]()
+var largeMapNode = cmap.New[MyPointFeature]()
+var largeMapWays = cmap.New[MyWayFeature]()
+
+// var largeMapLineString = cmap.New[geojson.Feature]()
+// var largeMapPolygon = cmap.New[geojson.Feature]()
 
 // var largeMapRelations = make(map[int64]MyRelation)
 
@@ -74,9 +77,19 @@ func Parse(file *os.File) error {
 			if err != nil {
 				log.Fatalf("UnmarshalBlob error, %v", err)
 			}
+
+			bbox := headerBlock.GetBbox()
+			left := float64(bbox.GetLeft()) * 0.000000001
+			right := float64(bbox.GetRight()) * 0.000000001
+			top := float64(bbox.GetTop()) * 0.000000001
+			bottom := float64(bbox.GetBottom()) * 0.000000001
+
+			bounds := geom.NewBounds(geom.XY)
+			bounds = bounds.Set(left, bottom, right, top)
+
 			fmt.Println("The Header Block:")
 			fmt.Printf("\tBbox: %v\n\tRequiredFeatures: %v\n\tOptinalFeatures: %v\n\tWritingProgramm: %v\n",
-				headerBlock.GetBbox(),
+				bounds,
 				headerBlock.GetRequiredFeatures(),
 				headerBlock.GetOptionalFeatures(),
 				headerBlock.GetWritingprogram())
@@ -136,15 +149,23 @@ func Parse(file *os.File) error {
 		i += 1
 	}
 	wg.Wait()
+
 	var tagged, untagged int64
-	valuesNodes := largeMapNode.IterBuffered()
-	for tuple := range valuesNodes {
-		if len(tuple.Val.Tags) != 0 {
+	largeMapNode.IterCb(func(key string, value MyPointFeature) {
+		if len(value.Feature.Properties) != 0 {
 			tagged += 1
 		} else {
 			untagged += 1
 		}
-	}
+	})
+	var lines, polys int64
+	largeMapWays.IterCb(func(key string, value MyWayFeature) {
+		if value.Feature.Type == "Polygon" {
+			polys += 1
+		} else {
+			lines += 1
+		}
+	})
 
 	fmt.Println("Anzahl Primitive Blocks:")
 	fmt.Printf("\t"+
@@ -155,7 +176,7 @@ func Parse(file *os.File) error {
 		"Summe: %v\n",
 		c_dense, tagged+untagged, tagged, untagged,
 		c_node,
-		c_way, largeMapLineString.Count()+largeMapPolygon.Count(), largeMapLineString.Count(), largeMapPolygon.Count(),
+		c_way, largeMapWays.Count(), lines, polys,
 		c_relation,
 		i)
 	return nil

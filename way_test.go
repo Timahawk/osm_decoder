@@ -1,13 +1,6 @@
 package main
 
-import (
-	"log"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/twpayne/go-geom/encoding/wkt"
-)
-
+/*
 func Test_decodeLineString(t *testing.T) {
 	Setup()
 
@@ -55,3 +48,4 @@ func Test_Polygon_SQLString(t *testing.T) {
 	}
 	assert.Equal(t, poly.SQLString(), "(652039684, ('\"building\"=>\"yes\"'), ST_GeomFromText('POLYGON ((1.5597917000000001 42.5105717, 1.5599388 42.5105371, 1.559889 42.5104217, 1.5597419000000001 42.5104562, 1.5597917000000001 42.5105717))'))")
 }
+*/

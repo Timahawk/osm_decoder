@@ -15,6 +15,7 @@ import (
 var connstring = "postgresql://postgres:postgres@localhost:5432/osmconverter"
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+var memprofile = flag.String("memprofile", "", "write mem profile to file")
 var upload = flag.Bool("upload", false, "Upload data to postgres")
 
 func main() {
@@ -26,8 +27,18 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer f.Close()
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
+	}
+
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		pprof.WriteHeapProfile(f)
 	}
 
 	start := time.Now()
